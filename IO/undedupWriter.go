@@ -3,7 +3,6 @@ package IO
 import (
 	"bufio"
 	"bytes"
-	"github.com/sirupsen/logrus"
 	"os"
 )
 
@@ -53,7 +52,7 @@ func (writer *UnDedupWriter) WriteData(data *[]byte) (int, error) {
 
 func (undedupWriter *UnDedupWriter) FlushData() error {
 	undedupWriter.writer.Write(undedupWriter.buffer.Bytes()) //TODO handle error
-	logrus.Infof("Wrote %d Bytes to compressed file", len(undedupWriter.buffer.Bytes()))
+	//logrus.Infof("Wrote %d Bytes from compressed file", len(undedupWriter.buffer.Bytes()))
 	undedupWriter.buffer.Reset()
 	undedupWriter.batchCounter = 0
 	return nil

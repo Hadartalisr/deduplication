@@ -1,15 +1,11 @@
 package crypto
 
 import (
-	"hash/crc64"
+	"hash/crc32"
 )
 
-var crc64Table *crc64.Table
+var crc32Table = crc32.MakeTable(0xD5828281)
 
-func InitCRCHashTable() {
-	crc64Table = crc64.MakeTable(crc64.ECMA)
-}
-
-func Checksum(bytes []byte) uint64 {
-	return crc64.Checksum(bytes, crc64Table)
+func Checksum(bytes []byte) uint32 {
+	return crc32.Checksum(bytes, crc32Table)
 }

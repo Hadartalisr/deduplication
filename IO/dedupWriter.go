@@ -9,7 +9,7 @@ import (
 )
 
 type DedupWriter struct {
-	outputFile *os.File
+	OutputFile *os.File
 	CurrentOffset int
 	batchCounter int
 	maxBatch int
@@ -37,9 +37,7 @@ func NewDedupWriter(filePath string, maxChunksInBatch, chunkMaxSize int) (*Dedup
 }
 
 func (dedupWriter *DedupWriter) Close()  error {
-	dedupWriter.FlushData()
-	dedupWriter.FlushAll()
-	dedupWriter.outputFile.Close()
+	dedupWriter.OutputFile.Close()
 	return nil
 }
 
@@ -68,6 +66,7 @@ func (dedupWriter *DedupWriter) FlushData() error {
 }
 
 func (dedupWriter *DedupWriter) FlushAll() error {
+	dedupWriter.FlushData()
 	dedupWriter.writer.Flush()
 	return nil
 }

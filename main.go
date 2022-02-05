@@ -4,21 +4,22 @@ import (
 	"bufio"
 	"deduplication/IO"
 	"deduplication/crypto"
-	"deduplication/test"
 	"github.com/sirupsen/logrus"
 	"io"
+	"os"
 	"path/filepath"
 	"time"
 )
 
-var filename = "50-10"
-var fileSuffix = ""//".txt"
+var filename = "5000-100"
+var fileSuffix = "" //".txt"
 var inputFilePath = filepath.Join(inputDirectoryPath, filename + fileSuffix )
 var outputFilePath = filepath.Join(outputDirectoryPath, filename + "-compressed" + fileSuffix)
 var undedupOutputFilePath = filepath.Join(outputDirectoryPath,  filename + fileSuffix)
 
 // deduplication performance
 var (
+	startTime time.Time
 	chunkfound = 0
 	chunkNotFound = 0
 	inputFileSize = 0
@@ -30,21 +31,45 @@ const (
 	logLevel = logrus.InfoLevel
 	inputDirectoryPath = "input"
 	outputDirectoryPath = "output"
-	minChunkSizeInBytes   = 8 //* 1024
-	maxChunkSizeInBytes   = 32 //* 1024
-	maxChunksInWriterBuffer   = 1000
+	startLength = 20
+	minChunkSizeInBytes   = 8 * 1024
+	maxChunkSizeInBytes   = 32 * 1024
+	maxChunksInWriterBuffer   = 3000
 	readBufferSizeInBytes = maxChunkSizeInBytes * 100
 )
 
 
 // data for the algorithm
-var hashToOffset = make(map[uint64]int)
+var startsSet = make(map[string]struct{})
+var hashToOffset = make(map[uint32]int)
 
 // tmp vars
 var hashFile []int = make([]int, 0)
 
-func info() {
-	logrus.Infof("Chunks found - %d\nChunks NOT found - %d\n", chunkfound, chunkNotFound)
+func info(inputFile , outputFile *os.File) {
+	elapsedTime := time.Now().Sub(startTime).Seconds()
+	fileInfo, err := inputFile.Stat()
+	if err != nil {
+		// TODO handle
+	}
+	inputFileSize := fileInfo.Size()
+	fileInfo, err = outputFile.Stat()
+	if err != nil {
+		// TODO handle
+	}
+	outputFileSize := fileInfo.Size()
+
+	inputFileSizeInMB := inputFileSize / (1024 * 1024)
+
+
+	logrus.Infof("Dedup time - %f seconds." , elapsedTime)
+	logrus.Infof("Dedup speed - %f MB/Sec", float64(inputFileSizeInMB)/elapsedTime)
+	logrus.Infof("Chunks FOUNT - %d Chunks NOT FOUNT - %d\n", chunkfound, chunkNotFound)
+	logrus.Infof("Input File size - %d Bytes", inputFileSize)
+	logrus.Infof("Output File size - %d Bytes", outputFileSize)
+	logrus.Infof("Dedup factor - %f", float64(inputFileSize)/float64(outputFileSize))
+
+
 	//logrus.Debugf("***** hashToOffset & idToData *****")
 	//for hash, offset := range hashToOffset {
 	//	logrus.Debugf("\thash[%d] offset[%d]\n", hash, offset)
@@ -60,14 +85,13 @@ func info() {
 
 func main() {
 	Dedup()
-	info()
-	UnDedup()
+	//UnDedup()
 
-	_, err := test.Equal(filepath.Join(inputDirectoryPath, filename+fileSuffix), filepath.Join(outputDirectoryPath, filename+fileSuffix))
-	if err != nil {
-		logrus.Debugf("Error occured Equality test")
-		print(err)
-	}
+	//_, err := test.Equal(filepath.Join(inputDirectoryPath, filename+fileSuffix), filepath.Join(outputDirectoryPath, filename+fileSuffix))
+	//if err != nil {
+	//	logrus.Debugf("Error occured Equality test")
+	//	print(err)
+	//}
 }
 
 func UnDedup() error{
@@ -88,7 +112,6 @@ func Dedup() error{
 	// init file reader
 	file, reader, err := IO.InitDedupFileReader(inputFilePath)
 
-	//inputFileSize = file.Stat()
 	if err != nil {
 		logrus.Debugf("Error occured during InitDedupFileReader")
 		print(err)
@@ -97,26 +120,25 @@ func Dedup() error{
 
 
 	dedupWriter, err := IO.NewDedupWriter(outputFilePath, maxChunksInWriterBuffer,maxChunkSizeInBytes)
-	startTime := time.Now()
+	startTime = time.Now()
 
 	err = dedup(reader, dedupWriter)
 	if err != nil {
 		logrus.Debugf("Error occured during dedup")
 		print(err)
 	}
-	dedupWriter.Close()
+	defer dedupWriter.Close()
+	dedupWriter.FlushAll()
 
 
-	elapsedTime := time.Now().Sub(startTime).Seconds()
-	logrus.Infof("Dedup time - %f seconds." , elapsedTime)
 
-	info()
+
+	info(file, dedupWriter.OutputFile)
 	return nil
 }
 
 func initDedupe() {
 	logrus.SetLevel(logLevel)
-	crypto.InitCRCHashTable()
 }
 
 
@@ -178,7 +200,7 @@ func chunk(buffer *[]byte, writer *IO.DedupWriter) (int, error) {
 		}
 		exists, id := getChunk((*buffer)[cutPoint-minChunkSizeInBytes: cutPoint])
 		if !exists {
-			cutPoint++
+			cutPoint+=1
 			continue
 		}
 		// check if we can split the buffer into 2 or more chunks, or we should insert new chunk
@@ -238,6 +260,10 @@ func getCreateChunk(data *[]byte, writer *IO.DedupWriter) int {
 // return false if there is no existing chunk for the data.
 // o.w true and the offset of the chunk
 func getChunk(data []byte) (bool, int){ //TODO switch to reference
+	_, okStart := startsSet[string(data[:startLength])] // it is possible to create bloom filter like with different offsets
+	if !okStart {
+		return false, 0
+	}
 	hash := crypto.Checksum(data)
 	val, ok := hashToOffset[hash]
 	return ok, val
@@ -246,6 +272,7 @@ func getChunk(data []byte) (bool, int){ //TODO switch to reference
 // createNewChunk
 // return the chunk offset of the data
 func createNewChunk (data *[]byte, writer *IO.DedupWriter) int  {
+	startsSet[string((*data)[:startLength])] = struct{}{}
 	hash := crypto.Checksum(*data)
 	offset := writer.CurrentOffset
 	n, err := writer.WriteData(data) //TODO writer to file in a buffer
